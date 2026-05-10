@@ -1,0 +1,18 @@
+feature,name,category,formula,source,intuition,expected_sign,reference
+size,Market capitalization (log),price,log(|prc| × shrout),CRSP,Smaller firms tend to earn higher average returns (size premium).,−,Banz (1981); Fama-French SMB (1993)
+mom_1,Short-term reversal (1-month),price,ret_{t},CRSP,Last month's return reverses next month — liquidity/microstructure-driven.,−,Jegadeesh (1990)
+mom_12_2,"Momentum (12-2, skip-month)",price,"cumret(ret_{t-12}, …, ret_{t-2})",CRSP,Stocks that outperformed over past year (excluding most recent month) keep outperforming.,+,Jegadeesh-Titman (1993); Carhart (1997)
+mom_36_13,Long-term reversal (36-13),price,"cumret(ret_{t-36}, …, ret_{t-13})",CRSP,Past long-horizon winners tend to underperform — multi-year reversal.,−,DeBondt-Thaler (1985)
+vol_12,Return volatility (12-month),price,"std(ret_{t-12}, …, ret_{t-1})",CRSP,Low-volatility stocks earn higher risk-adjusted returns (low-vol anomaly).,−,"Ang, Hodrick, Xing, Zhang (2006)"
+turnover,Share turnover,price,vol_{t} / shrout_{t},CRSP,Liquidity / attention proxy. Higher turnover associated with lower future returns.,−,"Datar, Naik, Radcliffe (1998)"
+mom_6_2,Medium-term momentum (6-2),price,"cumret(ret_{t-6}, …, ret_{t-2})",CRSP,Shorter-horizon momentum complements 12-2 momentum.,+,Jegadeesh-Titman (1993)
+maxret,Maximum monthly return (12-mo),price,"max(ret_{t-12}, …, ret_{t-1})",CRSP,Lottery-like stocks (high max return) underperform — preference-for-skewness anomaly.,−,"Bali, Cakici, Whitelaw (2011)"
+nsi,Net share issuance (12-mo),price,log(shrout_{t} / shrout_{t-12}),CRSP,Firms that issue shares (positive nsi) tend to underperform — issuance anomaly.,−,Pontiff-Woodgate (2008); Daniel-Titman (2006)
+beta,CAPM beta (36-mo rolling),price,"Cov(r_i, Mkt-RF) / Var(Mkt-RF), 36-month rolling window",CRSP + Ken French,High-beta stocks have lower risk-adjusted returns than CAPM implies (low-beta anomaly).,−,Frazzini-Pedersen (2014); Ang-Hodrick-Xing-Zhang (2006)
+age,Firm age (years on CRSP),price,(date − first CRSP appearance) in years,CRSP,Younger firms are riskier with higher expected returns; mature firms have lower returns.,−,Pastor-Veronesi (2003)
+bm,Book-to-market,fundamental,ceq / mcap,Compustat (ceq) + CRSP (mcap),Value premium — high B/M (value) stocks outperform low B/M (growth).,+,Rosenberg-Reid-Lanstein (1985); Fama-French HML (1993)
+ep,Earnings yield,fundamental,ib / mcap,Compustat (ib) + CRSP (mcap),Cheap-on-earnings stocks outperform expensive ones.,+,Basu (1977)
+profit,Operating profitability,fundamental,oibdp / at,Compustat,"More profitable firms earn higher returns, controlling for valuation.",+,Novy-Marx (2013); Fama-French RMW (2015)
+leverage,Financial leverage,fundamental,lt / at,Compustat,Capital structure measure. Empirical relationship to returns is mixed/weak.,?,Bhandari (1988)
+invest,Asset growth (year-over-year),fundamental,Δat / at_{prev FY},Compustat,High-investment firms earn lower future returns (investment factor).,−,Cooper-Gulen-Schill (2008); Fama-French CMA (2015)
+ind_mom,Industry momentum (SIC2),industry,Mean of mom_12_2 across firms in same SIC2 industry,CRSP (siccd) + derived,Industries with strong recent returns continue to outperform.,+,Moskowitz-Grinblatt (1999)

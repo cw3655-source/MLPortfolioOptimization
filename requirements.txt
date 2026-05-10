@@ -1,0 +1,28 @@
+# Core data
+numpy>=1.24
+pandas>=2.0
+pyarrow>=14            # parquet I/O
+scipy>=1.11
+
+# ML
+scikit-learn>=1.3
+xgboost>=2.0
+statsmodels>=0.14      # CAPM/FF5 regressions, DM test
+
+# Plotting
+matplotlib>=3.7
+
+# Streamlit web app
+streamlit>=1.28
+
+# Data sources
+yfinance>=0.2          # daily prices for realized Σ
+certifi>=2023.7        # SSL bundle for FF5 fetch
+
+# Serialization
+joblib>=1.3
+
+# Note: `wrds` and `psycopg2-binary` are NOT in this list — the deployed app
+# loads pre-computed artifacts (cache/app_artifacts.pkl) and doesn't need a
+# WRDS connection. Add them if you want to re-run the notebook in the deployed
+# environment.

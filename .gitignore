@@ -1,0 +1,48 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Virtual envs (in case anyone creates one inside the project folder)
+venv/
+.venv/
+env/
+
+# WRDS-licensed data — do NOT redistribute publicly
+cache/panel.parquet
+cache/crsp_*.parquet
+cache/compustat_*.parquet
+cache/*.parquet
+
+# But keep the derived artifacts file (model + latest snapshot, no raw WRDS rows)
+!cache/app_artifacts.pkl
+
+# WRDS credentials — never commit
+.pgpass
+
+# Generated outputs
+outputs/
+results.json
+chart_*.png
+
+# Local secrets / env files
+.env
+.envrc
+
+# macOS / OneDrive metadata
+.DS_Store
+._*
+Thumbs.db
+desktop.ini
+.AppleDouble
+.LSOverride
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
