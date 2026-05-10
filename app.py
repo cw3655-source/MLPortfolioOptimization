@@ -20,6 +20,15 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+def style_ax(ax):
+    ax.grid(False)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    ax.spines["bottom"].set_visible(True)
+    ax.spines["bottom"].set_linewidth(0.8)
+    return ax
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from pipeline import (
@@ -384,7 +393,7 @@ with tabs[2]:
     ax.set_ylabel("OOS R² (%)")
     ax.set_xlabel("Test year")
     ax.set_title("Walk-forward OOS R² by year, by model")
-    ax.grid(alpha=0.3)
+    style_ax(ax)
     ax.legend(frameon=False)
     st.pyplot(fig)
 
@@ -449,7 +458,7 @@ with tabs[3]:
             ax.axhline(0, color="black", linewidth=0.5)
             ax.set_ylabel("μ̂ (% monthly excess)")
             ax.set_title(f"Next-month forecast — {chosen_name} (excess of risk-free rate)")
-            ax.grid(alpha=0.2)
+            style_ax(ax)
             st.pyplot(fig)
 
             st.info(
@@ -481,6 +490,18 @@ with tabs[4]:
         tickers = st.session_state["fcast_tickers"]
         mu_hat  = st.session_state["fcast_mu"]
 
+        col_constraint, col_btn = st.columns([2, 1])
+        with col_constraint:
+            constraint = st.radio(
+                "Portfolio constraint",
+                options=["Long-short (allows negative weights)", "Long-only (no shorts)"],
+                horizontal=True,
+                key="opt_constraint",
+            )
+        opt_long_only = constraint.startswith("Long-only")
+        # Persist for the Backtest tab
+        st.session_state["opt_long_only"] = opt_long_only
+
         if st.button("⚖️ Optimize", type="primary", key="opt_btn"):
             with st.spinner("Pulling daily returns from Yahoo Finance..."):
                 today = pd.Timestamp.today()
@@ -501,7 +522,7 @@ with tabs[4]:
             else:
                 Sigma = realized_covariance(daily, window_days=60, horizon="monthly")
                 Sigma_arr = Sigma.loc[tickers, tickers].astype("float64").to_numpy()
-                w = tangency_portfolio(mu_hat, Sigma_arr, rf=0.0)
+                w = tangency_portfolio(mu_hat, Sigma_arr, rf=0.0, long_only=opt_long_only)
 
                 exp_ret  = float(w @ mu_hat)
                 port_var = float(w @ Sigma_arr @ w)
@@ -528,7 +549,7 @@ with tabs[4]:
                     ax.axhline(0, color="black", linewidth=0.5)
                     ax.set_ylabel("Weight (%)")
                     ax.set_title("Tangency portfolio weights")
-                    ax.grid(alpha=0.2)
+                    style_ax(ax)
                     st.pyplot(fig)
 
                 with col2:
@@ -549,27 +570,182 @@ with tabs[4]:
 # Backtest
 # -----------------------------------------------------------------------------
 with tabs[5]:
-    st.header("Strategy backtest vs benchmarks")
+    st.header("Backtest your portfolio")
+    st.markdown(
+        "Walk-forward backtest of the ML-driven tangency strategy on **your portfolio** "
+        "(from the Forecast tab), compared against equal-weighted buy-and-hold and SPY. "
+        "Each month: ML predicts μ̂, daily returns from yfinance estimate Σ, tangency optimizer "
+        "produces weights, weights are applied to realized next-month returns."
+    )
 
-    demo = art.get("demo_portfolio", {})
-    if demo:
-        demo_str = ", ".join(demo.values())
-        st.markdown(
-            f"Walk-forward backtest of the **{chosen_name}**-driven tangency strategy "
-            f"on the demo portfolio (`{demo_str}`), vs equal-weighted and SPY buy-and-hold."
-        )
-
-    bt = art.get("backtest")
-    bt_stats = art.get("backtest_stats")
-
-    if bt is None or len(bt) == 0:
-        st.error("No backtest results in artifacts.")
+    if "fcast_tickers" not in st.session_state:
+        st.info("👈 Run the **Forecast** tab first to set your portfolio.")
     else:
-        # Stats table
-        st.subheader("Performance summary")
-        if bt_stats is not None:
+        bt_tickers = st.session_state["fcast_tickers"]
+        st.markdown(f"**Portfolio:** {', '.join(bt_tickers)} ({len(bt_tickers)} stocks)")
+
+        # Long-only vs long-short toggle — defaults to whatever the user picked in Optimize
+        col_constraint, col_btn = st.columns([2, 1])
+        with col_constraint:
+            default_idx = 1 if st.session_state.get("opt_long_only", False) else 0
+            bt_constraint = st.radio(
+                "Portfolio constraint",
+                options=["Long-short", "Long-only"],
+                horizontal=True,
+                index=default_idx,
+                key="bt_constraint",
+            )
+        bt_long_only = bt_constraint == "Long-only"
+
+        run_bt = st.button("📈 Run backtest", type="primary", key="bt_btn")
+
+        # Show pre-computed demo backtest when nothing's been run yet
+        if not run_bt:
+            demo = art.get("demo_portfolio", {})
+            demo_bt = art.get("backtest")
+            demo_stats = art.get("backtest_stats")
+            if demo and demo_bt is not None:
+                with st.expander(
+                    f"📊 Pre-computed reference backtest — demo portfolio "
+                    f"({', '.join(demo.values())})",
+                    expanded=False,
+                ):
+                    st.markdown(
+                        "This is the static reference backtest from the notebook — long-short, "
+                        "5-stock demo. Click **Run backtest** above to backtest *your* portfolio instead."
+                    )
+                    if demo_stats is not None:
+                        st.dataframe(
+                            demo_stats.style.format({
+                                "total_return": "{:+.2%}",
+                                "ann_return":   "{:+.2%}",
+                                "ann_vol":      "{:.2%}",
+                                "sharpe":       "{:+.3f}",
+                                "max_drawdown": "{:.2%}",
+                            }),
+                            use_container_width=True,
+                        )
+        else:
+            # ---- Dynamic backtest on user portfolio ----
+            preds = art.get("rolling_predictions")
+            if preds is None:
+                st.error(
+                    "Rolling predictions not found in artifacts. "
+                    "Re-run §11 of the notebook to regenerate."
+                )
+                st.stop()
+
+            user_preds = preds[preds["ticker"].isin(bt_tickers)].copy()
+            available = sorted(user_preds["ticker"].unique())
+            missing = [t for t in bt_tickers if t not in available]
+            if missing:
+                st.warning(
+                    f"No historical predictions for: {', '.join(missing)} "
+                    "(not in WRDS universe during test window). Continuing with the rest."
+                )
+                bt_tickers = available
+
+            if len(bt_tickers) < 2:
+                st.error("Need at least 2 stocks with historical predictions to backtest.")
+                st.stop()
+
+            # Pull daily total returns for tickers + SPY
+            first_date = pd.Timestamp(user_preds["date"].min())
+            last_date  = pd.Timestamp(user_preds["date"].max())
+            buf_start  = (first_date - pd.DateOffset(months=6)).strftime("%Y-%m-%d")
+            buf_end    = (last_date + pd.DateOffset(months=2)).strftime("%Y-%m-%d")
+
+            with st.spinner(
+                f"Pulling daily returns for {len(bt_tickers)+1} tickers from yfinance "
+                f"({buf_start} → {buf_end})..."
+            ):
+                try:
+                    daily = pull_yfinance_daily(bt_tickers + ["SPY"], buf_start, buf_end)
+                except Exception as e:
+                    st.error(f"yfinance pull failed: {e}")
+                    st.stop()
+
+            daily = daily.dropna(how="all")
+            monthly = (1 + daily).resample("ME").prod() - 1
+
+            # Walk-forward loop
+            records = []
+            weights_history = []
+            eq_weight = np.ones(len(bt_tickers)) / len(bt_tickers)
+
+            progress = st.progress(0.0, text="Running backtest...")
+            rebalance_dates = sorted(user_preds["date"].unique())
+            for i, rebalance_dt in enumerate(rebalance_dates):
+                progress.progress((i + 1) / len(rebalance_dates), text=f"Month {i+1}/{len(rebalance_dates)}")
+
+                sub = user_preds[user_preds["date"] == rebalance_dt].set_index("ticker")
+                if not all(t in sub.index for t in bt_tickers):
+                    continue
+                mu = sub.loc[bt_tickers, "y_pred"].astype("float64").to_numpy()
+
+                rebalance_me = pd.Timestamp(rebalance_dt) + pd.offsets.MonthEnd(0)
+                dw = daily.loc[:rebalance_me, bt_tickers].dropna().tail(60)
+                if len(dw) < 30:
+                    continue
+                Sigma_d = dw.cov().to_numpy() * 21
+
+                try:
+                    w = tangency_portfolio(mu, Sigma_d, rf=0.0, long_only=bt_long_only)
+                except Exception:
+                    continue
+
+                next_me = rebalance_me + pd.offsets.MonthEnd(1)
+                if next_me not in monthly.index:
+                    continue
+                rt     = monthly.loc[next_me, bt_tickers].astype("float64").to_numpy()
+                spy_rt = monthly.loc[next_me, "SPY"]
+                if np.any(pd.isna(rt)) or pd.isna(spy_rt):
+                    continue
+
+                records.append({
+                    "month":          next_me,
+                    "strategy_total": float(w @ rt),
+                    "equal_total":    float(eq_weight @ rt),
+                    "spy_total":      float(spy_rt),
+                })
+                weights_history.append(pd.Series(w, index=bt_tickers, name=rebalance_dt))
+
+            progress.empty()
+
+            if not records:
+                st.error("Backtest produced no valid months — check ticker availability.")
+                st.stop()
+
+            bt = pd.DataFrame(records).set_index("month").sort_index()
+            weights = pd.DataFrame(weights_history)
+
+            # Performance stats
+            def perf_stats(r, label):
+                r = r.dropna()
+                n = len(r)
+                if n < 2:
+                    return {"label": label, "n_months": n,
+                            "total_return": np.nan, "ann_return": np.nan,
+                            "ann_vol": np.nan, "sharpe": np.nan, "max_drawdown": np.nan}
+                total_ret = (1 + r).prod() - 1
+                ann_ret   = (1 + r).prod() ** (12 / n) - 1
+                ann_vol   = r.std() * np.sqrt(12)
+                sharpe    = ann_ret / ann_vol if ann_vol > 0 else np.nan
+                cum       = (1 + r).cumprod()
+                max_dd    = (cum / cum.cummax() - 1).min()
+                return {"label": label, "n_months": n,
+                        "total_return": total_ret, "ann_return": ann_ret,
+                        "ann_vol": ann_vol, "sharpe": sharpe, "max_drawdown": max_dd}
+
+            stats_tbl = pd.DataFrame([
+                perf_stats(bt["strategy_total"], f"{chosen_name} tangency ({bt_constraint})"),
+                perf_stats(bt["equal_total"],    "Equal-weighted"),
+                perf_stats(bt["spy_total"],      "SPY"),
+            ]).set_index("label")
+
+            st.subheader("Performance summary")
             st.dataframe(
-                bt_stats.style.format({
+                stats_tbl.style.format({
                     "total_return": "{:+.2%}",
                     "ann_return":   "{:+.2%}",
                     "ann_vol":      "{:.2%}",
@@ -579,40 +755,56 @@ with tabs[5]:
                 use_container_width=True,
             )
 
-        # Cumulative wealth
-        st.subheader("Cumulative wealth ($1 starting)")
-        fig, ax = plt.subplots(figsize=(10, 4.5))
-        for col, label, color, ls in [
-            ("strategy_total", f"Strategy ({chosen_name})", "#1E2761", "-"),
-            ("equal_total",    "Equal-weighted (5 stocks)", "#2C5F2D", "--"),
-            ("spy_total",      "SPY (S&P 500)",             "#B85042", "-"),
-        ]:
-            if col in bt.columns:
-                wealth = (1 + bt[col].fillna(0)).cumprod()
-                ax.plot(wealth.index, wealth.values, label=label,
-                        linewidth=2, color=color, linestyle=ls)
-        ax.set_ylabel("Wealth ($1)")
-        ax.set_title("Walk-forward backtest cumulative wealth")
-        ax.legend(frameon=False)
-        ax.grid(alpha=0.3)
-        st.pyplot(fig)
+            # Cumulative wealth
+            st.subheader("Cumulative wealth ($1 starting)")
+            strat_w = (1 + bt["strategy_total"]).cumprod()
+            eq_w    = (1 + bt["equal_total"]).cumprod()
+            spy_w   = (1 + bt["spy_total"]).cumprod()
 
-        # Drawdown
-        st.subheader("Drawdowns")
-        fig, ax = plt.subplots(figsize=(10, 3.5))
-        for col, label, color, ls in [
-            ("strategy_total", f"Strategy ({chosen_name})", "#1E2761", "-"),
-            ("equal_total",    "Equal-weighted",            "#2C5F2D", "--"),
-            ("spy_total",      "SPY",                       "#B85042", "-"),
-        ]:
-            if col in bt.columns:
-                wealth = (1 + bt[col].fillna(0)).cumprod()
-                dd = wealth / wealth.cummax() - 1
+            fig, ax = plt.subplots(figsize=(10, 4.5))
+            strat_w.plot(ax=ax, label=f"Strategy ({chosen_name}, {bt_constraint})",
+                         linewidth=2, color="#1E2761")
+            eq_w.plot(ax=ax,    label="Equal-weighted",
+                      linewidth=1.6, color="#2C5F2D", linestyle="--")
+            spy_w.plot(ax=ax,   label="SPY",
+                       linewidth=2, color="#B85042")
+            ax.set_ylabel("Wealth ($1)")
+            ax.set_title(f"Walk-forward backtest — {len(bt_tickers)}-stock portfolio")
+            ax.legend(frameon=False)
+            style_ax(ax)
+            st.pyplot(fig)
+
+            # Drawdown
+            st.subheader("Drawdowns")
+            fig, ax = plt.subplots(figsize=(10, 3.5))
+            for series, label, color, ls in [
+                (strat_w, f"Strategy ({bt_constraint})", "#1E2761", "-"),
+                (eq_w,    "Equal-weighted",              "#2C5F2D", "--"),
+                (spy_w,   "SPY",                         "#B85042", "-"),
+            ]:
+                dd = series / series.cummax() - 1
                 ax.plot(dd.index, dd.values * 100, label=label,
                         linewidth=1.6, color=color, linestyle=ls)
-        ax.axhline(0, color="black", linewidth=0.5)
-        ax.set_ylabel("Drawdown (%)")
-        ax.set_title("Drawdown by month")
-        ax.legend(frameon=False)
-        ax.grid(alpha=0.3)
-        st.pyplot(fig)
+            ax.axhline(0, color="black", linewidth=0.5)
+            ax.set_ylabel("Drawdown (%)")
+            ax.set_title("Drawdown by month")
+            ax.legend(frameon=False)
+            style_ax(ax)
+            st.pyplot(fig)
+
+            # Weights drift
+            st.subheader("Tangency weights over time")
+            fig, ax = plt.subplots(figsize=(10, 3.5))
+            weights.plot(ax=ax, linewidth=1.4)
+            ax.axhline(0, color="black", linewidth=0.5)
+            ax.set_ylabel("Weight")
+            ax.set_title(f"Weights at each rebalance ({bt_constraint})")
+            ax.legend(frameon=False, ncol=min(len(bt_tickers), 6))
+            style_ax(ax)
+            st.pyplot(fig)
+            st.caption(
+                f"Weights summary (across {len(weights)} rebalances): "
+                f"max long = {weights.max().max():.2%}, "
+                f"max short = {weights.min().min():.2%}, "
+                f"mean turnover ≈ {weights.diff().abs().sum(axis=1).mean():.2%}/month"
+            )

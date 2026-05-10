@@ -1480,15 +1480,68 @@ def realized_covariance(
     return cov_daily * scales[horizon]
 
 
-def tangency_portfolio(mu: np.ndarray, Sigma: np.ndarray, rf: float = 0.0) -> np.ndarray:
+def tangency_portfolio(
+    mu: np.ndarray,
+    Sigma: np.ndarray,
+    rf: float = 0.0,
+    long_only: bool = False,
+) -> np.ndarray:
     """
-    Closed-form tangency portfolio weights:
-        w* ∝ Σ⁻¹ (μ − rf·1),   normalized to sum to 1.
-    Allows shorts. Add no-short / leverage caps via scipy.optimize if needed.
+    Tangency (maximum-Sharpe) portfolio weights.
+
+    Default (long_only=False):
+        Closed-form  w* ∝ Σ⁻¹ (μ − rf·1),  normalized to Σw=1.
+        Allows shorts. Fast (linear-solve) and stable when Σ is well-conditioned.
+
+    long_only=True:
+        Solves  max  (w'μ − rf) / √(w'Σw)
+        subject to  w_i ≥ 0  and  Σw = 1
+        via scipy.optimize SLSQP. No closed form for this constraint set.
+        Slightly slower (numerical optimization) but produces no short positions.
+
+    Parameters
+    ----------
+    mu        : (n,) expected returns (excess of rf if rf=0, else raw and we subtract).
+    Sigma     : (n,n) covariance matrix at the same horizon as mu.
+    rf        : scalar risk-free rate. Set to 0 if mu is already excess.
+    long_only : if True, constrain weights ≥ 0.
+
+    Returns
+    -------
+    w : (n,) weight vector summing to 1.
     """
-    excess = mu - rf
-    inv = np.linalg.solve(Sigma, excess)
-    return inv / inv.sum()
+    n = len(mu)
+    excess = np.asarray(mu, dtype=float) - rf
+    Sigma  = np.asarray(Sigma, dtype=float)
+
+    if not long_only:
+        inv = np.linalg.solve(Sigma, excess)
+        return inv / inv.sum()
+
+    # Long-only: SLSQP numerical solve
+    from scipy.optimize import minimize
+
+    def neg_sharpe(w):
+        ret = float(w @ excess)
+        var = float(w @ Sigma @ w)
+        if var <= 0:
+            return 1e10
+        return -ret / np.sqrt(var)
+
+    constraints = ({"type": "eq", "fun": lambda w: np.sum(w) - 1.0},)
+    bounds = [(0.0, 1.0)] * n
+    w0 = np.ones(n) / n
+
+    res = minimize(
+        neg_sharpe, w0,
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+        options={"ftol": 1e-9, "maxiter": 500},
+    )
+    if not res.success:
+        log.warning(f"Long-only tangency didn't fully converge: {res.message}")
+    return res.x
 
 
 # =============================================================================

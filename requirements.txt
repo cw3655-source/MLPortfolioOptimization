@@ -2,7 +2,7 @@
 numpy>=1.24
 pandas>=2.0
 pyarrow>=14            # parquet I/O
-scipy>=1.11
+scipy>=1.11             # used for long-only tangency optimization (SLSQP)
 
 # ML
 scikit-learn>=1.3
