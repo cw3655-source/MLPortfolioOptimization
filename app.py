@@ -74,12 +74,31 @@ all_models = art.get("models_prod")
 if all_models is None:
     all_models = {best_model_name: art["model_prod"]}
 
+# ElasticNet is retained in `all_models` for transparency in the Models tab's
+# methodology / comparison section, but is excluded from the production
+# selector below. On monthly cross-sectional returns its L1 penalty zeros out
+# every coefficient under cross-validated lambda, producing a constant
+# forecast across stocks — a known failure mode of sparse linear methods in
+# low-SNR regimes. See the caption below the selector for details.
+EXCLUDE_FROM_SELECTOR = {"ElasticNet"}
+selectable_models = {k: v for k, v in all_models.items() if k not in EXCLUDE_FROM_SELECTOR}
+
+# If walk-forward's best happens to be an excluded model, fall back to a sane
+# default from the selectable set (prefer XGBoost > Ridge > anything else).
+if best_model_name in EXCLUDE_FROM_SELECTOR or best_model_name not in selectable_models:
+    for _candidate in ("XGBoost", "Ridge"):
+        if _candidate in selectable_models:
+            best_model_name = _candidate
+            break
+    else:
+        best_model_name = next(iter(selectable_models))
+
 # The selector in the Models tab writes to st.session_state["model_selector"].
 # We read it here at script top so the rest of the app sees the user's choice.
 chosen_name  = st.session_state.get("model_selector", best_model_name)
-if chosen_name not in all_models:
+if chosen_name not in selectable_models:
     chosen_name = best_model_name
-chosen_model = all_models[chosen_name]
+chosen_model = selectable_models[chosen_name]
 model_prod   = chosen_model   # kept for any code that still uses model_prod
 
 last_panel_date = pd.to_datetime(latest_features["date"]).max().strftime("%Y-%m-%d")
@@ -475,7 +494,7 @@ Sequential shallow trees, each fit to the residuals of the previous ensemble. Ca
         f"portfolio weights change across model classes."
     )
 
-    model_options = list(all_models.keys())
+    model_options = list(selectable_models.keys())
     default_idx = model_options.index(best_model_name) if best_model_name in model_options else 0
 
     def _format_option(name):
@@ -493,6 +512,21 @@ Sequential shallow trees, each fit to the residuals of the previous ensemble. Ca
         f"Currently using **{chosen_name}** for downstream forecasting and optimization. "
         f"Change the selection above and switch to any other tab — the app reruns and all "
         f"forecasts / weights / backtests update automatically."
+    )
+    st.markdown(
+        """
+        > **Note on ElasticNet.** ElasticNet is trained and evaluated alongside Ridge and
+        > XGBoost (see the methodology and walk-forward comparison above) but is **excluded
+        > from the production selector**. On monthly cross-sectional stock returns the
+        > signal-to-noise ratio is low enough that ElasticNet's L1 component zeros out every
+        > coefficient under cross-validated $\\lambda$, producing a constant forecast across
+        > stocks — Σ⁻¹μ̂ then has no cross-sectional tilt and the tangency portfolio
+        > collapses. This is a known failure mode of sparse linear methods in low-SNR
+        > regimes; Gu, Kelly & Xiu (2020) report similar fragility for L1-heavy linear
+        > models on the same task. **Ridge** keeps all coefficients via L2 shrinkage and
+        > serves as the linear-ML representative; **XGBoost** captures nonlinear
+        > interactions.
+        """
     )
 
 # -----------------------------------------------------------------------------
