@@ -11,6 +11,7 @@ statsmodels>=0.14      # CAPM/FF5 regressions, DM test
 
 # Plotting
 matplotlib>=3.7
+plotly>=5.18           # interactive charts in the Streamlit app
 
 # Streamlit web app
 streamlit>=1.28

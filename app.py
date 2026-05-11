@@ -15,19 +15,11 @@ import sys
 from pathlib import Path
 
 import joblib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
-
-def style_ax(ax):
-    ax.grid(False)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    ax.spines["left"].set_visible(False)
-    ax.spines["bottom"].set_visible(True)
-    ax.spines["bottom"].set_linewidth(0.8)
-    return ax
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -387,15 +379,20 @@ with tabs[2]:
 
     st.subheader("Per-year OOS R²")
     yearly = art["yearly_r2"]
-    fig, ax = plt.subplots(figsize=(9, 4))
-    yearly.plot(marker="o", ax=ax, linewidth=1.6)
-    ax.axhline(0, color="black", linewidth=0.5)
-    ax.set_ylabel("OOS R² (%)")
-    ax.set_xlabel("Test year")
-    ax.set_title("Walk-forward OOS R² by year, by model")
-    style_ax(ax)
-    ax.legend(frameon=False)
-    st.pyplot(fig)
+    yearly_long = (
+        yearly.reset_index()
+              .melt(id_vars=yearly.index.name or "test_year", var_name="model", value_name="oos_r2")
+    )
+    fig = px.line(
+        yearly_long,
+        x=yearly.index.name or "test_year", y="oos_r2",
+        color="model", markers=True,
+        title="Walk-forward OOS R² by year, by model",
+        labels={"oos_r2": "OOS R² (%)", "test_year": "Test year"},
+    )
+    fig.add_hline(y=0, line_color="black", line_width=0.5)
+    fig.update_layout(hovermode="x unified", legend_title_text="")
+    st.plotly_chart(fig, use_container_width=True)
 
 # -----------------------------------------------------------------------------
 # Forecast
@@ -451,15 +448,24 @@ with tabs[3]:
                 use_container_width=True,
             )
 
-            # Bar chart of μ̂
-            fig, ax = plt.subplots(figsize=(9, 3.5))
+            # Interactive bar chart of μ̂
             colors = ["#1E2761" if x >= 0 else "#B85042" for x in mu_hat]
-            ax.bar(present, mu_hat * 100, color=colors)
-            ax.axhline(0, color="black", linewidth=0.5)
-            ax.set_ylabel("μ̂ (% monthly excess)")
-            ax.set_title(f"Next-month forecast — {chosen_name} (excess of risk-free rate)")
-            style_ax(ax)
-            st.pyplot(fig)
+            fig = go.Figure(
+                go.Bar(
+                    x=present,
+                    y=(mu_hat * 100).tolist(),
+                    marker_color=colors,
+                    text=[f"{v*100:+.3f}%" for v in mu_hat],
+                    hovertemplate="<b>%{x}</b><br>μ̂ = %{y:+.4f}%<extra></extra>",
+                )
+            )
+            fig.add_hline(y=0, line_color="black", line_width=0.5)
+            fig.update_layout(
+                yaxis_title="μ̂ (% monthly excess)",
+                title=f"Next-month forecast — {chosen_name} (excess of risk-free rate)",
+                showlegend=False,
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
             st.info(
                 "Positive μ̂ → model expects to beat T-bills. Negative → expects underperformance. "
@@ -543,14 +549,23 @@ with tabs[4]:
                         use_container_width=True,
                     )
 
-                    fig, ax = plt.subplots(figsize=(8, 3.5))
                     colors = ["#1E2761" if x >= 0 else "#B85042" for x in w]
-                    ax.bar(tickers, w * 100, color=colors)
-                    ax.axhline(0, color="black", linewidth=0.5)
-                    ax.set_ylabel("Weight (%)")
-                    ax.set_title("Tangency portfolio weights")
-                    style_ax(ax)
-                    st.pyplot(fig)
+                    fig = go.Figure(
+                        go.Bar(
+                            x=tickers,
+                            y=(w * 100).tolist(),
+                            marker_color=colors,
+                            text=[f"{v*100:+.2f}%" for v in w],
+                            hovertemplate="<b>%{x}</b><br>weight = %{y:+.2f}%<extra></extra>",
+                        )
+                    )
+                    fig.add_hline(y=0, line_color="black", line_width=0.5)
+                    fig.update_layout(
+                        yaxis_title="Weight (%)",
+                        title="Tangency portfolio weights",
+                        showlegend=False,
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
 
                 with col2:
                     st.subheader("Portfolio metrics")
@@ -596,6 +611,32 @@ with tabs[5]:
                 key="bt_constraint",
             )
         bt_long_only = bt_constraint == "Long-only"
+
+        with st.expander("📘 Methodology — what each benchmark measures", expanded=False):
+            st.markdown(
+                """
+                The backtest compares your **ML tangency strategy** against four other approaches
+                run on the *same portfolio*. All use the same realized covariance Σ̂ (60-day window
+                of daily returns) and the same optimizer; what differs is the expected-return input.
+
+                | Strategy | $\\hat\\mu$ at each rebalance | What it tests |
+                |---|---|---|
+                | **ML tangency** *(yours)* | Production model forecast | The protagonist |
+                | **Historical-mean MVO** | Sample mean of past **36 monthly returns** | Does ML beat the textbook "use past returns as forecast"? |
+                | **Equal-weighted** | None — $w_i = 1/N$ | Baseline: does *any* optimization help vs naive 1/N? |
+                | **SPY (S&P 500)** | Passive market portfolio | Has the strategy at least beaten the index? |
+
+                **Historical-mean window = 36 months (3 years).** Standard academic choice — long
+                enough for the sample mean to be reasonably stable, short enough to adapt to regime
+                change. Same window Goyal-Welch use for their equity-premium predictability tests
+                and what most CFA-curriculum mean-variance examples assume. With <12 months of
+                history available the row is skipped.
+
+                **The most informative comparison: ML tangency vs Historical-mean MVO.** Identical
+                infrastructure, identical Σ̂, identical constraint set — only $\\hat\\mu$ differs.
+                The wedge between those two lines isolates the economic value of the ML forecast.
+                """
+            )
 
         run_bt = st.button("📈 Run backtest", type="primary", key="bt_btn")
 
@@ -652,7 +693,8 @@ with tabs[5]:
             # Pull daily total returns for tickers + SPY
             first_date = pd.Timestamp(user_preds["date"].min())
             last_date  = pd.Timestamp(user_preds["date"].max())
-            buf_start  = (first_date - pd.DateOffset(months=6)).strftime("%Y-%m-%d")
+            # 42-month buffer covers both the 60-day Σ window and the 36-month historical-mean window
+            buf_start  = (first_date - pd.DateOffset(months=42)).strftime("%Y-%m-%d")
             buf_end    = (last_date + pd.DateOffset(months=2)).strftime("%Y-%m-%d")
 
             with st.spinner(
@@ -681,16 +723,24 @@ with tabs[5]:
                 sub = user_preds[user_preds["date"] == rebalance_dt].set_index("ticker")
                 if not all(t in sub.index for t in bt_tickers):
                     continue
-                mu = sub.loc[bt_tickers, "y_pred"].astype("float64").to_numpy()
+                mu_ml = sub.loc[bt_tickers, "y_pred"].astype("float64").to_numpy()
 
                 rebalance_me = pd.Timestamp(rebalance_dt) + pd.offsets.MonthEnd(0)
+
+                # Σ̂ from past 60 trading days of daily returns
                 dw = daily.loc[:rebalance_me, bt_tickers].dropna().tail(60)
                 if len(dw) < 30:
                     continue
                 Sigma_d = dw.cov().to_numpy() * 21
 
+                # μ̂ for Historical-mean MVO: past 36 monthly returns (sample mean)
+                hist_window = monthly.loc[:rebalance_me, bt_tickers].dropna().tail(36)
+                mu_hist = hist_window.mean().to_numpy() if len(hist_window) >= 12 else None
+
                 try:
-                    w = tangency_portfolio(mu, Sigma_d, rf=0.0, long_only=bt_long_only)
+                    w_ml   = tangency_portfolio(mu_ml, Sigma_d, rf=0.0, long_only=bt_long_only)
+                    w_hist = (tangency_portfolio(mu_hist, Sigma_d, rf=0.0, long_only=bt_long_only)
+                              if mu_hist is not None else None)
                 except Exception:
                     continue
 
@@ -704,11 +754,12 @@ with tabs[5]:
 
                 records.append({
                     "month":          next_me,
-                    "strategy_total": float(w @ rt),
+                    "strategy_total": float(w_ml   @ rt),
+                    "histmvo_total":  float(w_hist @ rt) if w_hist is not None else np.nan,
                     "equal_total":    float(eq_weight @ rt),
                     "spy_total":      float(spy_rt),
                 })
-                weights_history.append(pd.Series(w, index=bt_tickers, name=rebalance_dt))
+                weights_history.append(pd.Series(w_ml, index=bt_tickers, name=rebalance_dt))
 
             progress.empty()
 
@@ -739,6 +790,7 @@ with tabs[5]:
 
             stats_tbl = pd.DataFrame([
                 perf_stats(bt["strategy_total"], f"{chosen_name} tangency ({bt_constraint})"),
+                perf_stats(bt["histmvo_total"],  f"Historical-mean MVO ({bt_constraint})"),
                 perf_stats(bt["equal_total"],    "Equal-weighted"),
                 perf_stats(bt["spy_total"],      "SPY"),
             ]).set_index("label")
@@ -755,53 +807,78 @@ with tabs[5]:
                 use_container_width=True,
             )
 
-            # Cumulative wealth
+            # Cumulative wealth (4 lines: ML strategy, Historical-mean MVO, equal, SPY)
             st.subheader("Cumulative wealth ($1 starting)")
             strat_w = (1 + bt["strategy_total"]).cumprod()
+            hist_w  = (1 + bt["histmvo_total"].fillna(0)).cumprod()
             eq_w    = (1 + bt["equal_total"]).cumprod()
             spy_w   = (1 + bt["spy_total"]).cumprod()
 
-            fig, ax = plt.subplots(figsize=(10, 4.5))
-            strat_w.plot(ax=ax, label=f"Strategy ({chosen_name}, {bt_constraint})",
-                         linewidth=2, color="#1E2761")
-            eq_w.plot(ax=ax,    label="Equal-weighted",
-                      linewidth=1.6, color="#2C5F2D", linestyle="--")
-            spy_w.plot(ax=ax,   label="SPY",
-                       linewidth=2, color="#B85042")
-            ax.set_ylabel("Wealth ($1)")
-            ax.set_title(f"Walk-forward backtest — {len(bt_tickers)}-stock portfolio")
-            ax.legend(frameon=False)
-            style_ax(ax)
-            st.pyplot(fig)
+            series_list = [
+                (strat_w, f"Strategy ({chosen_name}, {bt_constraint})", "#1E2761", "solid"),
+                (hist_w,  f"Historical-mean MVO ({bt_constraint})",     "#E8833D", "solid"),
+                (eq_w,    "Equal-weighted",                             "#2C5F2D", "dash"),
+                (spy_w,   "SPY (S&P 500)",                              "#B85042", "solid"),
+            ]
+
+            fig = go.Figure()
+            for series, label, color, dash in series_list:
+                fig.add_trace(go.Scatter(
+                    x=series.index, y=series.values,
+                    name=label, mode="lines",
+                    line=dict(color=color, dash=dash, width=2),
+                    hovertemplate="<b>" + label + "</b><br>%{x|%Y-%m}: $%{y:.3f}<extra></extra>",
+                ))
+            fig.update_layout(
+                title=f"Walk-forward backtest — {len(bt_tickers)}-stock portfolio",
+                yaxis_title="Wealth ($1)",
+                hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.caption(
+                "**The wedge between the navy (ML) and orange (Historical-mean MVO) lines is the "
+                "economic value of the ML forecast** — both use the same Σ̂ and same constraint, "
+                "only μ̂ differs."
+            )
 
             # Drawdown
             st.subheader("Drawdowns")
-            fig, ax = plt.subplots(figsize=(10, 3.5))
-            for series, label, color, ls in [
-                (strat_w, f"Strategy ({bt_constraint})", "#1E2761", "-"),
-                (eq_w,    "Equal-weighted",              "#2C5F2D", "--"),
-                (spy_w,   "SPY",                         "#B85042", "-"),
-            ]:
-                dd = series / series.cummax() - 1
-                ax.plot(dd.index, dd.values * 100, label=label,
-                        linewidth=1.6, color=color, linestyle=ls)
-            ax.axhline(0, color="black", linewidth=0.5)
-            ax.set_ylabel("Drawdown (%)")
-            ax.set_title("Drawdown by month")
-            ax.legend(frameon=False)
-            style_ax(ax)
-            st.pyplot(fig)
+            fig = go.Figure()
+            for series, label, color, dash in series_list:
+                dd = (series / series.cummax() - 1) * 100
+                fig.add_trace(go.Scatter(
+                    x=dd.index, y=dd.values,
+                    name=label, mode="lines",
+                    line=dict(color=color, dash=dash, width=1.6),
+                    hovertemplate="<b>" + label + "</b><br>%{x|%Y-%m}: %{y:.2f}%<extra></extra>",
+                ))
+            fig.add_hline(y=0, line_color="black", line_width=0.5)
+            fig.update_layout(
+                title="Drawdown by month",
+                yaxis_title="Drawdown (%)",
+                hovermode="x unified",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            )
+            st.plotly_chart(fig, use_container_width=True)
 
             # Weights drift
             st.subheader("Tangency weights over time")
-            fig, ax = plt.subplots(figsize=(10, 3.5))
-            weights.plot(ax=ax, linewidth=1.4)
-            ax.axhline(0, color="black", linewidth=0.5)
-            ax.set_ylabel("Weight")
-            ax.set_title(f"Weights at each rebalance ({bt_constraint})")
-            ax.legend(frameon=False, ncol=min(len(bt_tickers), 6))
-            style_ax(ax)
-            st.pyplot(fig)
+            weights_long = (
+                weights.reset_index()
+                       .rename(columns={"index": "rebalance"})
+                       .melt(id_vars="rebalance", var_name="ticker", value_name="weight")
+            )
+            fig = px.line(
+                weights_long,
+                x="rebalance", y="weight", color="ticker",
+                title=f"Weights at each rebalance ({bt_constraint})",
+                labels={"weight": "Weight", "rebalance": "Rebalance date"},
+            )
+            fig.add_hline(y=0, line_color="black", line_width=0.5)
+            fig.update_layout(hovermode="x unified", legend_title_text="")
+            st.plotly_chart(fig, use_container_width=True)
             st.caption(
                 f"Weights summary (across {len(weights)} rebalances): "
                 f"max long = {weights.max().max():.2%}, "
