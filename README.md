@@ -12,7 +12,7 @@ Forecasts next-month excess returns for individual stocks using firm characteris
 
 **End-to-end pipeline:**
 
-1. Pull monthly returns (CRSP) + fundamentals (Compustat) via WRDS, 2000–present
+1. Pull monthly returns (CRSP) + fundamentals (Compustat) via WRDS, 1975–present (50+ years)
 2. Build 17 firm characteristics (momentum, value, profitability, etc.) + ~74 SIC2 industry dummies, all rank-transformed cross-sectionally to [-1, 1]
 3. Train ElasticNet / Ridge / XGBoost; pick best via walk-forward backtest (annual refit, 10-year rolling window)
 4. Forecast next-month excess return for any user-supplied portfolio

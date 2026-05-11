@@ -135,7 +135,7 @@ with tabs[0]:
         are combined with disciplined risk modeling and transparent out-of-sample evaluation. This
         app operationalizes that idea on the Russell 1000 cross-section:
 
-        1. Pull monthly returns and fundamentals from CRSP/Compustat via WRDS (2000–present).
+        1. Pull monthly returns and fundamentals from CRSP/Compustat via WRDS (1975–present, 50+ years).
         2. Construct 17 firm characteristics + ~74 SIC2 industry dummies, all rank-transformed
            cross-sectionally to [-1, 1] each month.
         3. Train ElasticNet, Ridge, and XGBoost; pick the best via walk-forward backtest.
@@ -176,8 +176,9 @@ with tabs[0]:
         f"""
         - **Universe**: top 1,000 stocks by lagged market cap each month — a
           survivorship-bias-free academic stand-in for the Russell 1000.
-        - **Sample**: {DATA_START} → {DATA_END} ({sample_years}+ years, multiple regimes
-          including dotcom, GFC, COVID, ZIRP, and post-COVID rate cycle).
+        - **Sample**: {DATA_START} → {DATA_END} ({sample_years}+ years, multiple regimes:
+          1970s stagflation, 1980s Volcker disinflation, 1990s tech build-up, dotcom bubble + bust,
+          GFC, post-GFC QE, ZIRP, COVID, and the post-COVID rate cycle).
         - **Monthly returns**: CRSP MSF, with Shumway (1997) delisting-return adjustment.
         - **Fundamentals**: Compustat *funda*, merged via the CCM linktable, lagged 6 months to
           avoid look-ahead bias.
@@ -210,8 +211,8 @@ with tabs[0]:
 
         **Evaluation modes** used in this project:
 
-        - **Single split** — train 2000–2017, validate 2018–2019, test 2020 onward. Fast, but one
-          realization is luck-prone.
+        - **Single split** — train 1975–2014 (40 years), validate 2015–2019, test 2020 onward.
+          Fast, but one realization is luck-prone.
         - **Walk-forward backtest** — refit at the start of each test year, using the prior 10
           years as training and 1 year as validation. Yields per-year R² across multiple regimes
           plus a pooled R² as the headline. More credible than a single split.
@@ -435,13 +436,13 @@ Sequential shallow trees, each fit to the residuals of the previous ensemble. Ca
     with col1:
         st.markdown("**Single-split test**")
         st.dataframe(art["comparison_single"], use_container_width=True)
-        st.caption("Train: 2000–2017 · Val: 2018–2019 · Test: 2020 onward")
+        st.caption("Train: 1975–2014 · Val: 2015–2019 · Test: 2020 onward")
     with col2:
         st.markdown("**Walk-forward backtest**")
         st.dataframe(art["rolling_summary"], use_container_width=True)
         st.caption(
-            "Annual refit, 10-year rolling window. Pooled R² across all test years; "
-            "hit rate = % of years with positive R²."
+            "Annual refit, 10-year rolling window, OOS test 2000–present (~25 years). "
+            "Pooled R² across all test years is the GKX headline; hit rate = % of years with positive R²."
         )
 
     st.subheader("Per-year OOS R²")
