@@ -62,12 +62,25 @@ def load_artifacts():
 
 art = load_artifacts()
 
-chosen_name     = art["chosen_name"]
-model_prod      = art["model_prod"]
+best_model_name = art["chosen_name"]   # what walk-forward picked offline (default)
 latest_features = art["latest_features"]
 ALL_COLS        = art["all_cols"]
 DATA_START      = art["data_start"]
 DATA_END        = art["data_end"]
+
+# All three production models (trained on full sample). Falls back gracefully
+# if the artifact only has the single legacy model_prod.
+all_models = art.get("models_prod")
+if all_models is None:
+    all_models = {best_model_name: art["model_prod"]}
+
+# The selector in the Models tab writes to st.session_state["model_selector"].
+# We read it here at script top so the rest of the app sees the user's choice.
+chosen_name  = st.session_state.get("model_selector", best_model_name)
+if chosen_name not in all_models:
+    chosen_name = best_model_name
+chosen_model = all_models[chosen_name]
+model_prod   = chosen_model   # kept for any code that still uses model_prod
 
 last_panel_date = pd.to_datetime(latest_features["date"]).max().strftime("%Y-%m-%d")
 
@@ -359,22 +372,76 @@ with tabs[1]:
 # Models
 # -----------------------------------------------------------------------------
 with tabs[2]:
-    st.header("Model comparison")
+    st.header("Models")
+
+    # -------------------------------------------------------------
+    st.subheader("Methodology — the three ML methods")
     st.markdown(
-        f"Three ML methods, two evaluation modes. Final production model: **{chosen_name}**."
+        "Three model classes from different ML traditions, all trained on the same feature matrix "
+        "(17 firm characteristics + ~74 SIC2 industry dummies) and the same target (next-month "
+        "excess return over the risk-free rate, winsorized at ±50%)."
+    )
+
+    st.markdown("##### ElasticNet — linear with mixed L1/L2 penalty")
+    st.markdown(
+        r"""
+Linear regression with a weighted combination of lasso ($L_1$) and ridge ($L_2$) penalties:
+
+$$
+\min_\theta \;\tfrac{1}{2N}\|y - X\theta\|_2^2 \;+\; \lambda\!\left[(1-\rho)\|\theta\|_1 + \tfrac{1}{2}\rho\|\theta\|_2^2\right]
+$$
+
+$\rho{=}1$ reduces to ridge, $\rho{\to}0$ reduces to lasso. Both hyperparameters chosen via TimeSeriesSplit CV.
+
+- **Pros:** sparse coefficients (drops irrelevant features automatically), highly interpretable signs/magnitudes, computationally cheap, well-established in asset pricing.
+- **Cons:** linear only — misses feature interactions; the $L_1$ thresholding can over-zero coefficients in low-signal regimes; sensitive to feature scaling.
+        """
+    )
+
+    st.markdown("##### Ridge — linear with $L_2$ penalty only")
+    st.markdown(
+        r"""
+Linear regression with pure $L_2$ regularization. Has a closed-form solution.
+
+$$
+\theta^\star = (X^\top X + \lambda I)^{-1} X^\top y
+$$
+
+- **Pros:** all features stay in the model (just shrunken proportionally), stable with collinear predictors, closed-form so extremely fast, intuitive shrinkage interpretation.
+- **Cons:** linear-only like ElasticNet; no automatic feature selection — every feature contributes, harder to interpret en masse; coefficients depend on the chosen $\lambda$.
+        """
+    )
+
+    st.markdown("##### XGBoost — gradient-boosted regression trees")
+    st.markdown(
+        r"""
+Sequential shallow trees, each fit to the residuals of the previous ensemble. Captures non-linear effects and feature interactions that linear models cannot.
+
+- **Pros:** captures non-linearity and interactions — GKX (2020) finds that this is precisely where tree methods beat linear ML; robust to mixed feature scales (no standardization needed); built-in feature importance via gain; handles outliers gracefully.
+- **Cons:** many hyperparameters (depth, learning rate, n_estimators, subsample); less interpretable than linear coefficients; prone to overfitting in low-signal / small-sample regimes; requires a validation set for early stopping.
+        """
+    )
+
+    st.divider()
+
+    # -------------------------------------------------------------
+    st.subheader("Model comparison")
+    st.markdown(
+        "Two evaluation modes. **Pooled R²** in the walk-forward table is the GKX-comparable headline; "
+        f"the model with the highest pooled R² is marked ★ and is the default selection below."
     )
 
     col1, col2 = st.columns(2)
     with col1:
-        st.subheader("Single-split test")
+        st.markdown("**Single-split test**")
         st.dataframe(art["comparison_single"], use_container_width=True)
         st.caption("Train: 2000–2017 · Val: 2018–2019 · Test: 2020 onward")
     with col2:
-        st.subheader("Walk-forward backtest")
+        st.markdown("**Walk-forward backtest**")
         st.dataframe(art["rolling_summary"], use_container_width=True)
         st.caption(
-            "Annual refit, 10-year rolling window. **Pooled R²** is the "
-            "GKX-style headline; **hit rate** measures robustness."
+            "Annual refit, 10-year rolling window. Pooled R² across all test years; "
+            "hit rate = % of years with positive R²."
         )
 
     st.subheader("Per-year OOS R²")
@@ -393,6 +460,39 @@ with tabs[2]:
     fig.add_hline(y=0, line_color="black", line_width=0.5)
     fig.update_layout(hovermode="x unified", legend_title_text="")
     st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # -------------------------------------------------------------
+    # Selector — switches the production model used by Forecast, Optimize, Backtest
+    # -------------------------------------------------------------
+    st.subheader("Production model selector")
+    st.markdown(
+        f"Switch the model used downstream by Forecast / Optimize / Backtest. "
+        f"The ★ marks the model with the highest walk-forward pooled R² — but the underlying "
+        f"single-split numbers are close, and it's instructive to compare how forecasts and "
+        f"portfolio weights change across model classes."
+    )
+
+    model_options = list(all_models.keys())
+    default_idx = model_options.index(best_model_name) if best_model_name in model_options else 0
+
+    def _format_option(name):
+        return f"★ {name}  (best by walk-forward)" if name == best_model_name else name
+
+    st.radio(
+        "Production model (used by §4 Forecast, §5 Optimize, §6 Backtest):",
+        options=model_options,
+        index=default_idx,
+        horizontal=True,
+        format_func=_format_option,
+        key="model_selector",
+    )
+    st.caption(
+        f"Currently using **{chosen_name}** for downstream forecasting and optimization. "
+        f"Change the selection above and switch to any other tab — the app reruns and all "
+        f"forecasts / weights / backtests update automatically."
+    )
 
 # -----------------------------------------------------------------------------
 # Forecast
